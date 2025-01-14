@@ -964,12 +964,45 @@ aesloop:
 	VMOV	V0.D[0], R0
 	RET
 
+// The Arm architecture provides a user space accessible counter-timer which
+// is incremented at a fixed but machine-specific rate. Software can (spin)
+// wait until the counter-timer reaches some desired value.
+// Armv8.7-A introduced the WFET (FEAT_WFxT) instruction, which allows the
+// processor to enter a low power state for a set time, or until an event is
+// received.
+// Without this feature, we can instead use the ISB instruction to
+// decrease processor activity and thus power consumption between checks of
+// the counter-timer. Note that we do not depend on the latency of the ISB instruction.
+// Read more in this Arm blog post:
+// https://community.arm.com/arm-community-blogs/b/architectures-and-processors-blog/posts/multi-threaded-applications-arm
+
 TEXT runtime·procyield(SB),NOSPLIT,$0-0
-	MOVWU	cycles+0(FP), R0
-again:
-	YIELD
-	SUBW	$1, R0
-	CBNZ	R0, again
+	MOVWU	backoff_ns+0(FP), R0
+	ISB     $15
+	CMP     $0x12, R0
+	BLS     ret
+	SUB     $0x12, R0, R0
+	MRS     CNTFRQ_EL0, R1
+	ADD     R0<<4, R0, R0
+	MUL     R1, R0, R0
+	LSR     $30, R0, R0
+	CBZ     R0, ret
+	MRS     CNTVCT_EL0, R2
+	CMP     $0x28, R0
+	BLS     loop
+	SUB     $0x28, R0, R3
+delay:
+	ISB     $15
+	MRS     CNTVCT_EL0, R1
+	SUB     R2, R1, R1
+	CMP     R3, R1
+	BCC     delay
+loop:
+	MRS     CNTVCT_EL0, R1
+	SUB     R2, R1, R1
+	CMP     R0, R1
+	BCC     loop
+ret:
 	RET
 
 // Save state of caller into g->sched,

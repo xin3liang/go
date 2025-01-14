@@ -7,6 +7,7 @@
 package runtime
 
 import (
+	"internal/goarch"
 	"internal/runtime/atomic"
 	"unsafe"
 )
@@ -21,19 +22,8 @@ import (
 // must ensure the nodes are allocated outside the Go heap.
 type lfstack uint64
 
-func (head *lfstack) push(node *lfnode) {
-	node.pushcnt++
-	new := lfstackPack(node, node.pushcnt)
-	for {
-		old := atomic.Load64((*uint64)(head))
-		node.next = old
-		if atomic.Cas64((*uint64)(head), old, new) {
-			break
-		}
-	}
-}
-
 func (head *lfstack) pop() unsafe.Pointer {
+	var backoff uint32 = 128
 	for {
 		old := atomic.Load64((*uint64)(head))
 		if old == 0 {
@@ -43,6 +33,28 @@ func (head *lfstack) pop() unsafe.Pointer {
 		next := atomic.Load64(&node.next)
 		if atomic.Cas64((*uint64)(head), old, next) {
 			return unsafe.Pointer(node)
+		}
+		if goarch.IsArm64 == 1 {
+			// Use a backoff approach to reduce demand to the shared memory location
+			// decreases memory contention and allows for other threads to make quicker
+			// progress.
+			// Read more in this Arm blog post:
+			// https://community.arm.com/arm-community-blogs/b/architectures-and-processors-blog/posts/multi-threaded-applications-arm
+			procyield(backoff)
+			// Increase backoff time.
+			backoff += backoff >> 1
+		}
+	}
+}
+
+func (head *lfstack) push(node *lfnode) {
+	node.pushcnt++
+	new := lfstackPack(node, node.pushcnt)
+	for {
+		old := atomic.Load64((*uint64)(head))
+		node.next = old
+		if atomic.Cas64((*uint64)(head), old, new) {
+			break
 		}
 	}
 }

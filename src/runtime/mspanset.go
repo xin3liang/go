@@ -149,6 +149,7 @@ retry:
 // pop is safe to call concurrently with other pop and push operations.
 func (b *spanSet) pop() *mspan {
 	var head, tail uint32
+	var backoff uint32 = 128
 claimLoop:
 	for {
 		headtail := b.index.load()
@@ -176,6 +177,16 @@ claimLoop:
 		for want == head {
 			if b.index.cas(headtail, makeHeadTailIndex(want+1, tail)) {
 				break claimLoop
+			}
+			if goarch.IsArm64 == 1 {
+				// Use a backoff approach to reduce demand to the shared memory location
+				// decreases memory contention and allows for other threads to make quicker
+				// progress.
+				// Read more in this Arm blog post:
+				// https://community.arm.com/arm-community-blogs/b/architectures-and-processors-blog/posts/multi-threaded-applications-arm
+				procyield(backoff)
+				// Increase backoff time.
+				backoff += backoff >> 1
 			}
 			headtail = b.index.load()
 			head, tail = headtail.split()
