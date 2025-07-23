@@ -6,182 +6,108 @@
 
 // See memclrNoHeapPointers Go doc for important implementation constraints.
 
+#define dstin	R0
+#define val	ZR
+#define count	R1
+#define dst	R2
+#define dstend	R3
+#define zva_val	R4
+#define off	R2
+#define dstend2	R4
+
 // func memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr)
 // Also called from assembly in sys_windows_arm64.s without g (but using Go stack convention).
 TEXT runtime·memclrNoHeapPointers<ABIInternal>(SB),NOSPLIT,$0-16
-	CMP	$16, R1
-	// If n is equal to 16 bytes, use zero_exact_16 to zero
-	BEQ	zero_exact_16
+	VDUP	val, V0.B16
+	CMP	$16, count
+	BLO	set_small
 
-	// If n is greater than 16 bytes, use zero_by_16 to zero
-	BHI	zero_by_16
+	ADD	count, dstin, dstend
+	CMP	$64, count
+	BHS	set_128
 
-	// n is less than 16 bytes
-	ADD	R1, R0, R7
-	TBZ	$3, R1, less_than_8
-	MOVD	ZR, (R0)
-	MOVD	ZR, -8(R7)
-	RET
-
-less_than_8:
-	TBZ	$2, R1, less_than_4
-	MOVW	ZR, (R0)
-	MOVW	ZR, -4(R7)
-	RET
-
-less_than_4:
-	CBZ	R1, ending
-	MOVB	ZR, (R0)
-	TBZ	$1, R1, ending
-	MOVH	ZR, -2(R7)
-
-ending:
-	RET
-
-zero_exact_16:
-	// n is exactly 16 bytes
-	STP	(ZR, ZR), (R0)
-	RET
-
-zero_by_16:
-	// n greater than 16 bytes, check if the start address is aligned
-	NEG	R0, R4
-	ANDS	$15, R4, R4
-	// Try zeroing using zva if the start address is aligned with 16
-	BEQ	try_zva
-
-	// Non-aligned store
-	STP	(ZR, ZR), (R0)
-	// Make the destination aligned
-	SUB	R4, R1, R1
-	ADD	R4, R0, R0
-	B	try_zva
-
-tail_maybe_long:
-	CMP	$64, R1
-	BHS	no_zva
-
-tail63:
-	ANDS	$48, R1, R3
-	BEQ	last16
-	CMPW	$32, R3
-	BEQ	last48
-	BLT	last32
-	STP.P	(ZR, ZR), 16(R0)
-last48:
-	STP.P	(ZR, ZR), 16(R0)
-last32:
-	STP.P	(ZR, ZR), 16(R0)
-	// The last store length is at most 16, so it is safe to use
-	// stp to write last 16 bytes
-last16:
-	ANDS	$15, R1, R1
-	CBZ	R1, last_end
-	ADD	R1, R0, R0
-	STP	(ZR, ZR), -16(R0)
-last_end:
+	// Set 16..63 bytes.
+	MOVD	$16, off
+	AND	count>>1, off, off
+	SUB	off, dstend, dstend2
+	FMOVQ	F0, (dstin)
+	FMOVQ	F0, (dstin)(off)
+	FMOVQ	F0, -16(dstend2)
+	FMOVQ	F0, -16(dstend)
 	RET
 
 	PCALIGN	$16
-no_zva:
-	SUB	$16, R0, R0
-	SUB	$64, R1, R1
+	// Set 0..15 bytes.
+set_small:
+	ADD	count, dstin, dstend
+	CMP	$4, count
+	BLO	set_3
+	LSR	$3, count, off
+	SUB	off<<2, dstend, dstend2
+	FMOVS	F0, (dstin)
+	FMOVS	F0, (dstin)(off<<2)
+	FMOVS	F0, -4(dstend2)
+	FMOVS	F0, -4(dstend)
+	RET
 
-loop_64:
-	STP	(ZR, ZR), 16(R0)
-	STP	(ZR, ZR), 32(R0)
-	STP	(ZR, ZR), 48(R0)
-	STP.W	(ZR, ZR), 64(R0)
-	SUBS	$64, R1, R1
-	BGE	loop_64
-	ANDS	$63, R1, ZR
-	ADD	$16, R0, R0
-	BNE	tail63
+set_3:
+	// Set 0..3 bytes.
+	CBZ	count, set_0
+	LSR	$1, count, off
+	MOVB	val, (dstin)
+	MOVB	val, (dstin)(off)
+	MOVB	val, -1(dstend)
+set_0:
 	RET
 
 	PCALIGN	$16
-try_zva:
-	// Try using the ZVA feature to zero entire cache lines
-	// It is not meaningful to use ZVA if the block size is less than 64,
-	// so make sure that n is greater than or equal to 64
-	CMP	$63, R1
-	BLE	tail63
-
-	CMP	$128, R1
-	// Ensure n is at least 128 bytes, so that there is enough to copy after
-	// alignment.
-	BLT	no_zva
-	// Check if ZVA is allowed from user code, and if so get the block size
-	MOVW	block_size<>(SB), R5
-	TBNZ	$31, R5, no_zva
-	CBNZ	R5, zero_by_line
-	// DCZID_EL0 bit assignments
-	// [63:5] Reserved
-	// [4]    DZP, if bit set DC ZVA instruction is prohibited, else permitted
-	// [3:0]  log2 of the block size in words, eg. if it returns 0x4 then block size is 16 words
-	MRS	DCZID_EL0, R3
-	TBZ	$4, R3, init
-	// ZVA not available
-	MOVW	$~0, R5
-	MOVW	R5, block_size<>(SB)
-	B	no_zva
+set_128:
+	BIC	$15, dstin, dst
+	CMP	$128, count
+	BHI	set_long
+	FSTPQ	(F0, F0), (dstin)
+	FSTPQ	(F0, F0), 32(dstin)
+	FSTPQ	(F0, F0), -64(dstend)
+	FSTPQ	(F0, F0), -32(dstend)
+	RET
 
 	PCALIGN	$16
-init:
-	MOVW	$4, R9
-	ANDW	$15, R3, R5
-	LSLW	R5, R9, R5
-	MOVW	R5, block_size<>(SB)
-
-	ANDS	$63, R5, R9
-	// Block size is less than 64.
+set_long:
+	FMOVQ	F0, (dstin)
+	FMOVQ	F0, 16(dst)
+	TSTW	$255, val
 	BNE	no_zva
+	MRS	DCZID_EL0, zva_val
+	AND	$31, zva_val, zva_val
+	CMP	$4, zva_val		// ZVA size is 64 bytes.
+	BNE	no_zva
+	FSTPQ	(F0, F0), 32(dst)
+	BIC	$63, dstin, dst
+	SUB	dst, dstend, count	// Count is now 64 too large.
+	SUB	$(64 + 64), count, count	// Adjust count and bias for loop.
+
+	// Write last bytes before ZVA loop.
+	FSTPQ	(F0, F0), -64(dstend)
+	FSTPQ	(F0, F0), -32(dstend)
 
 	PCALIGN	$16
-zero_by_line:
-	CMP	R5, R1
-	// Not enough memory to reach alignment
-	BLO	no_zva
-	SUB	$1, R5, R6
-	NEG	R0, R4
-	ANDS	R6, R4, R4
-	// Already aligned
-	BEQ	aligned
-
-	// check there is enough to copy after alignment
-	SUB	R4, R1, R3
-
-	// Check that the remaining length to ZVA after alignment
-	// is greater than 64.
-	CMP	$64, R3
-	CCMP	GE, R3, R5, $10  // condition code GE, NZCV=0b1010
-	BLT	no_zva
-
-	// We now have at least 64 bytes to zero, update n
-	MOVD	R3, R1
-
-loop_zva_prolog:
-	STP	(ZR, ZR), (R0)
-	STP	(ZR, ZR), 16(R0)
-	STP	(ZR, ZR), 32(R0)
-	SUBS	$64, R4, R4
-	STP	(ZR, ZR), 48(R0)
-	ADD	$64, R0, R0
-	BGE	loop_zva_prolog
-
-	ADD	R4, R0, R0
-
-aligned:
-	SUB	R5, R1, R1
-
-	PCALIGN	$16
-loop_zva:
-	WORD	$0xd50b7420 // DC ZVA, R0
-	ADD	R5, R0, R0
-	SUBS	R5, R1, R1
-	BHS	loop_zva
-	ANDS	R6, R1, R1
-	BNE	tail_maybe_long
+zva64_loop:
+	ADD	$64, dst, dst
+	DC	ZVA, dst
+	SUBS	$64, count, count
+	BHI	zva64_loop
 	RET
 
-GLOBL block_size<>(SB), NOPTR, $8
+	PCALIGN	$8
+no_zva:
+	SUB	dst, dstend, count	// Count is 32 too large.
+	SUB	$(64 + 32), count, count	// Adjust count and bias for loop.
+no_zva_loop:
+	FSTPQ	(F0, F0), 32(dst)
+	FSTPQ	(F0, F0), 64(dst)
+	ADD	$64, dst, dst
+	SUBS	$64, count, count
+	BHI	no_zva_loop
+	FSTPQ	(F0, F0), -64(dstend)
+	FSTPQ	(F0, F0), -32(dstend)
+	RET
