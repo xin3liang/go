@@ -30,8 +30,9 @@ TEXT runtime·memclrNoHeapPointers<ABIInternal>(SB),NOSPLIT,$0-16
 	MOVD	$16, off
 	AND	count>>1, off, off
 	SUB	off, dstend, dstend2
+	ADD	off, dstin, dst
 	FMOVQ	F0, (dstin)
-	FMOVQ	F0, (dstin)(off)
+	FMOVQ	F0, (dst)
 	FMOVQ	F0, -16(dstend2)
 	FMOVQ	F0, -16(dstend)
 	RET
