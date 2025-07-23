@@ -60,6 +60,7 @@ TEXT runtime·memmove<ABIInternal>(SB), NOSPLIT|NOFRAME, $0-24
 	FMOVQ	B_q, -16(dstend)
 	RET
 
+	PCALIGN	$16
 	// Medium copies: 33..128 bytes
 copy32_128:
 	FLDPQ	(src), (A_q, B_q)
@@ -70,6 +71,7 @@ copy32_128:
 	FSTPQ	(C_q, D_q), -32(dstend)
 	RET
 
+	PCALIGN	$16
 	// Copy 8-15 bytes
 copy16:
 	TBZ	$3, count, copy8
@@ -114,6 +116,7 @@ copy4:
 copy0:
 	RET
 
+	PCALIGN	$8
 	// Copy more than 128 bytes.
 copy_long:
 	ADD	count, dstin, dstend
@@ -155,6 +158,8 @@ copy64_from_end:
 	FSTPQ	(A_q, B_q), -32(dstend)
 	RET
 
+	PCALIGN	$16
+	NOOP
 	// Large backwards copy for overlapping copies.
 	// Copy 16 bytes and then align srcend to 16-byte alignment.
 copy_long_backwards:
