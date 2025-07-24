@@ -39,16 +39,20 @@ TEXT runtime·memclrNoHeapPointers<ABIInternal>(SB),NOSPLIT,$0-16
 
 	PCALIGN	$16
 	// Set 0..15 bytes.
+	// Note(xin3liang): Operate by double-word as much as possible for
+	// count >=8 bytes to ensure writing 64-bit pointer atomicity.
 set_small:
 	ADD	count, dstin, dstend
-	CMP	$4, count
-	BLO	set_3
-	LSR	$3, count, off
-	SUB	off<<2, dstend, dstend2
-	FMOVS	F0, (dstin)
-	FMOVS	F0, (dstin)(off<<2)
-	FMOVS	F0, -4(dstend2)
-	FMOVS	F0, -4(dstend)
+	TBZ	$3, count, set_7
+	MOVD	val, (dstin)
+	MOVD	val, -8(dstend)
+	RET
+
+	// Set 0..7 bytes.
+set_7:
+	TBZ	$2, count, set_3
+	MOVW	val, (dstin)
+	MOVW	val, -4(dstend)
 	RET
 
 set_3:
@@ -76,15 +80,15 @@ set_128:
 set_long:
 	FMOVQ	F0, (dstin)
 	FMOVQ	F0, 16(dst)
-	TSTW	$255, val
-	BNE	no_zva
+//	TSTW	$255, val
+//	BNE	no_zva
 	MRS	DCZID_EL0, zva_val
 	AND	$31, zva_val, zva_val
-	CMP	$4, zva_val		// ZVA size is 64 bytes.
+	CMP	$4, zva_val			// ZVA size is 64 bytes.
 	BNE	no_zva
 	FSTPQ	(F0, F0), 32(dst)
 	BIC	$63, dstin, dst
-	SUB	dst, dstend, count	// Count is now 64 too large.
+	SUB	dst, dstend, count		// Count is now 64 too large.
 	SUB	$(64 + 64), count, count	// Adjust count and bias for loop.
 
 	// Write last bytes before ZVA loop.
@@ -101,7 +105,7 @@ zva64_loop:
 
 	PCALIGN	$8
 no_zva:
-	SUB	dst, dstend, count	// Count is 32 too large.
+	SUB	dst, dstend, count		// Count is 32 too large.
 	SUB	$(64 + 32), count, count	// Adjust count and bias for loop.
 no_zva_loop:
 	FSTPQ	(F0, F0), 32(dst)
