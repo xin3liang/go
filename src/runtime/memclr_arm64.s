@@ -30,9 +30,11 @@ TEXT runtime·memclrNoHeapPointers<ABIInternal>(SB),NOSPLIT,$0-16
 	MOVD	$16, off
 	AND	count>>1, off, off
 	SUB	off, dstend, dstend2
-	ADD	off, dstin, dst
 	FMOVQ	F0, (dstin)
-	FMOVQ	F0, (dst)
+	// Go arm64 asm doesn't support register's value as offset.
+	// E.g. FMOVQ F0, (R0)(R2)
+	// See issue:
+	WORD	$0x3CA26800 // FMOVQ F0, (dstin)(off) a.k.a str q0, [x0, x2]
 	FMOVQ	F0, -16(dstend2)
 	FMOVQ	F0, -16(dstend)
 	RET
