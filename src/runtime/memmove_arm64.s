@@ -58,7 +58,7 @@ TEXT runtime·memmove<ABIInternal>(SB), NOSPLIT|NOFRAME, $0-24
 	LDP	(src), (A_l, A_h)
 	LDP	-16(srcend), (B_l, B_h)
 	STP	(A_l, A_h), (dstin)
-	STP 	B_l, B_h), -16(dstend)
+	STP 	(B_l, B_h), -16(dstend)
 	RET
 
 	// Small copies: 1..16 bytes.
