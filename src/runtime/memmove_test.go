@@ -285,9 +285,11 @@ func benchmarkSizes(b *testing.B, sizes []int, fn func(b *testing.B, n int)) {
 var bufSizes = []int{
 	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 	32, 64, 128, 256, 512, 1024, 2048, 4096,
+	1024 * 16, 1024 * 64, 1024 * 128, 1024 * 256, 1024 * 1024,
 }
 var bufSizesOverlap = []int{
 	32, 64, 128, 256, 512, 1024, 2048, 4096,
+	1024 * 16, 1024 * 64, 1024 * 128, 1024 * 256, 1024 * 1024,
 }
 
 func BenchmarkMemmove(b *testing.B) {
