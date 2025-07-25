@@ -33,7 +33,7 @@ TEXT runtime·memclrNoHeapPointers<ABIInternal>(SB),NOSPLIT,$0-16
 	FMOVQ	F0, (dstin)
 	// Go arm64 asm doesn't support register's value as offset.
 	// E.g. FMOVQ F0, (R0)(R2)
-	// See issue:
+	// See issue: https://github.com/golang/go/issues/74753
 	WORD	$0x3CA26800 // FMOVQ F0, (dstin)(off) a.k.a str q0, [x0, x2]
 	FMOVQ	F0, -16(dstend2)
 	FMOVQ	F0, -16(dstend)
@@ -41,8 +41,8 @@ TEXT runtime·memclrNoHeapPointers<ABIInternal>(SB),NOSPLIT,$0-16
 
 	PCALIGN	$16
 	// Set 0..15 bytes.
-	// Note(xin3liang): Operate by double-word as much as possible for
-	// count >=8 bytes to ensure writing 64-bit pointer atomicity.
+	// Note(xin3liang): For count >= 8 bytes, operate with 8-byte
+	// alignment to ensure atomic writing of 64-bit pointers.
 set_small:
 	ADD	count, dstin, dstend
 	TBZ	$3, count, set_7
